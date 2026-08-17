@@ -138,6 +138,127 @@ impl<'j> JsonValue<'j> {
         static EMPTY_OBJECT: OnceLock<JsonObject<'static>> = OnceLock::new();
         JsonValue::Object(EMPTY_OBJECT.get_or_init(|| Arc::new(Vec::new())).clone())
     }
+
+    /// Returns `true` if the `JsonValue` is `Null`.
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// Returns `true` if the `JsonValue` is a `Bool`.
+    #[inline]
+    pub fn is_boolean(&self) -> bool {
+        matches!(self, Self::Bool(_))
+    }
+
+    /// If the `JsonValue` is a `Bool`, returns the associated `bool`.
+    #[inline]
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is an `Int`, `BigInt`, or `Float`.
+    #[inline]
+    pub fn is_number(&self) -> bool {
+        matches!(self, Self::Int(_) | Self::Float(_)) || {
+            #[cfg(feature = "num-bigint")]
+            {
+                matches!(self, Self::BigInt(_))
+            }
+            #[cfg(not(feature = "num-bigint"))]
+            {
+                false
+            }
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is an `Int`.
+    #[inline]
+    pub fn is_int(&self) -> bool {
+        matches!(self, Self::Int(_))
+    }
+
+    /// If the `JsonValue` is an `Int`, returns the associated `i64`.
+    #[inline]
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is a `Float`.
+    #[inline]
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float(_))
+    }
+
+    /// If the `JsonValue` is a `Float` or `Int`, returns the numeric value as an `f64`.
+    #[inline]
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float(f) => Some(*f),
+            Self::Int(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is a `Str`.
+    #[inline]
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::Str(_))
+    }
+
+    /// If the `JsonValue` is a `Str`, returns the associated string slice.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Str(s) => Some(s.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is an `Array`.
+    #[inline]
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::Array(_))
+    }
+
+    /// If the `JsonValue` is an `Array`, returns a reference to the `JsonArray`.
+    #[inline]
+    pub fn as_array(&self) -> Option<&JsonArray<'j>> {
+        match self {
+            Self::Array(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `JsonValue` is an `Object`.
+    #[inline]
+    pub fn is_object(&self) -> bool {
+        matches!(self, Self::Object(_))
+    }
+
+    /// If the `JsonValue` is an `Object`, returns a reference to the `JsonObject`.
+    #[inline]
+    pub fn as_object(&self) -> Option<&JsonObject<'j>> {
+        match self {
+            Self::Object(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// If the `JsonValue` is an `Object`, returns a reference to the value corresponding to the key.
+    #[inline]
+    pub fn get(&self, key: &str) -> Option<&JsonValue<'j>> {
+        match self {
+            Self::Object(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
 }
 
 fn value_static(v: JsonValue<'_>) -> JsonValue<'static> {
@@ -712,5 +833,79 @@ fn take_value_skip_recursive(
 
             current_recursion = recursion_stack[current_recursion_depth];
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_value_accessors() {
+        let json = r#"{"a": 1, "b": "hello", "c": true, "d": null, "e": [1.5]}"#;
+        let val = JsonValue::parse(json.as_bytes(), true).unwrap();
+
+        assert!(val.is_object());
+        assert_eq!(val.as_object().unwrap().len(), 5);
+
+        let val_a = val.get("a").unwrap();
+        assert!(val_a.is_number());
+        assert!(val_a.is_int());
+        assert_eq!(val_a.as_i64(), Some(1));
+        assert_eq!(val_a.as_f64(), Some(1.0));
+
+        let val_b = val.get("b").unwrap();
+        assert!(val_b.is_string());
+        assert_eq!(val_b.as_str(), Some("hello"));
+
+        let val_c = val.get("c").unwrap();
+        assert!(val_c.is_boolean());
+        assert_eq!(val_c.as_bool(), Some(true));
+
+        let val_d = val.get("d").unwrap();
+        assert!(val_d.is_null());
+
+        let val_e = val.get("e").unwrap();
+        assert!(val_e.is_array());
+        let arr = val_e.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].is_float());
+        assert_eq!(arr[0].as_f64(), Some(1.5));
+
+        assert!(val.get("non_existent").is_none());
+        assert!(!val_a.is_string());
+        assert_eq!(val_a.as_str(), None);
+
+        // Negative branch tests for complete coverage
+        let null_val = JsonValue::Null;
+        assert!(!null_val.is_boolean());
+        assert_eq!(null_val.as_bool(), None);
+        assert!(!null_val.is_number());
+        assert!(!null_val.is_int());
+        assert_eq!(null_val.as_i64(), None);
+        assert!(!null_val.is_float());
+        assert_eq!(null_val.as_f64(), None);
+        assert!(!null_val.is_string());
+        assert_eq!(null_val.as_str(), None);
+        assert!(!null_val.is_array());
+        assert_eq!(null_val.as_array(), None);
+        assert!(!null_val.is_object());
+        assert_eq!(null_val.as_object(), None);
+        assert_eq!(null_val.get("key"), None);
+
+        assert!(!val_a.is_null());
+        assert_eq!(val_a.as_bool(), None);
+        assert!(!val_a.is_float());
+        assert_eq!(val_a.as_array(), None);
+        assert_eq!(val_a.as_object(), None);
+        assert_eq!(val_a.get("key"), None);
+
+        #[cfg(feature = "num-bigint")]
+        {
+            let big_int_val = JsonValue::BigInt(num_bigint::BigInt::from(100));
+            assert!(big_int_val.is_number());
+            assert!(!big_int_val.is_int());
+            assert_eq!(big_int_val.as_i64(), None);
+        }
     }
 }
